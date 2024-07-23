@@ -1,6 +1,6 @@
 # rusty ollama
 
-A Rust project named "Everything" that leverages asynchronous programming to make requests to an external service, parse the responses, and handle them accordingly. This project is built with a focus on learning and demonstrating the use of various Rust features and libraries, including `reqwest` for making HTTP requests, `serde` for serialization and deserialization, `tokio` for asynchronous runtime, and `futures-util` for working with futures.
+A Rust project named "rusty ollama" that leverages asynchronous programming to make requests to an external service, parse the responses, and handle them accordingly. This project is built with a focus on learning and demonstrating the use of various Rust features and libraries, including `reqwest` for making HTTP requests, `serde` for serialization and deserialization, `tokio` for asynchronous runtime, and `futures-util` for working with futures.
 
 ## Features
 
@@ -18,7 +18,7 @@ A Rust project named "Everything" that leverages asynchronous programming to mak
 
 ## Getting Started
 
-To get started with "Everything", ensure you have Rust and Cargo installed on your machine. Then, clone this repository and navigate into the project directory.
+To get started with "rusty ollama", ensure you have Rust and Cargo installed on your machine. Then, clone this repository and navigate into the project directory.
 
 ```sh
 git clone https://github.com/mbn-code/rusty-OLLAMA.git
