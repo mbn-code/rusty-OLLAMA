@@ -1,3 +1,8 @@
+
+![ollama rust cover](cover.jpg)
+
+
+
 # rusty ollama
 
 A Rust project named "rusty ollama" that leverages asynchronous programming to make requests to an external service, parse the responses, and handle them accordingly. This project is built with a focus on learning and demonstrating the use of various Rust features and libraries, including `reqwest` for making HTTP requests, `serde` for serialization and deserialization, `tokio` for asynchronous runtime, and `futures-util` for working with futures.
