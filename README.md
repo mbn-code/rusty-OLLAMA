@@ -20,6 +20,7 @@ A Rust project named "rusty ollama" that leverages asynchronous programming to m
 - `serde` and `serde_json` for JSON parsing
 - `tokio` as the asynchronous runtime
 - `futures-util` for additional utilities when working with futures
+- `Ollama` Get the Ollama app for your operating system, and download the model you will be using
 
 ## Getting Started
 

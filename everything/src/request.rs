@@ -1,50 +1,41 @@
 use reqwest::Client;
 use serde::Deserialize;
-use futures_util::StreamExt;
 use std::error::Error;
 
 #[derive(Deserialize, Debug)]
-struct OllamaStreamResponse {
+struct OllamaResponse {
     response: String,
-    done: bool,
 }
 
 pub async fn request_ollama(prompt: &str) -> Result<String, Box<dyn Error>> {
-    // Create a new HTTP client
     let client = Client::new();
-
-    // Define the URL and the payload
     let url = "http://localhost:11434/api/generate";
     let payload = serde_json::json!({
         "model": "llama3",
-        "prompt": prompt
+        "prompt": prompt,
+        "stream": false
     });
 
-    // Send the POST request and get the response stream
+    println!("Sending request to: {}", url);
+    println!("Payload: {}", payload);
+
+    // Send the POST request
     let res = client.post(url)
         .json(&payload)
         .send()
         .await?;
 
+    // Extract the response status code
+    let status = res.status();
+
+    // Collect the response text for debugging
+    let text = res.text().await?;
+
     // Check if the response status is success
-    if !res.status().is_success() {
-        return Err(Box::from(format!("Request failed with status: {}", res.status())));
+    if status.is_success() {
+        let response_json: OllamaResponse = serde_json::from_str(&text)?;
+        Ok(response_json.response)
+    } else {
+        Err(Box::from(format!("Request failed with status: {}. Response body: {}", status, text)))
     }
-
-    // Stream the response body and collect the "response" fields
-    let mut stream = res.bytes_stream();
-    let mut full_response = String::new();
-
-    while let Some(item) = stream.next().await {
-        let chunk = item?;
-        // Parse the chunk as JSON
-        if let Ok(json) = serde_json::from_slice::<OllamaStreamResponse>(&chunk) {
-            full_response.push_str(&json.response);
-            if json.done {
-                break;
-            }
-        }
-    }
-
-    Ok(full_response)
 }
