@@ -24,21 +24,27 @@ impl eframe::App for App {
         // Process pending responses first
         let mut pending = self.pending_responses.lock().unwrap();
         for response in pending.drain(..) {
-            self.conversation.push(response);
+            if let Some((_, temp_id)) = response.split_once('(') {
+                if let Some(position) = self.conversation.iter().position(|m| m.contains(temp_id)) {
+                    self.conversation[position] = response.replace(&format!(" ({})", temp_id), "");
+                }
+            }
         }
-        drop(pending); // Release the lock immediately
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            // Chat history with scroll area
+            // Chat history with bottom padding
             ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
+                    // Reserve space for input panel + padding
+                    let available_height = ui.available_height() - 150.0;
+                    ui.set_min_height(available_height);
+
                     for message in &self.conversation {
                         let (sender, content) = message.split_once(':').unwrap_or(("", message));
                         let is_user = sender.trim() == "You";
                         
-                        // Message bubble styling
                         let bubble_color = if is_user {
                             egui::Color32::from_rgb(0, 92, 175)
                         } else {
@@ -53,9 +59,9 @@ impl eframe::App for App {
 
                         ui.with_layout(
                             if is_user {
-                                egui::Layout::right_to_left(egui::Align::Center)
+                                egui::Layout::right_to_left(egui::Align::Min)
                             } else {
-                                egui::Layout::left_to_right(egui::Align::Center)
+                                egui::Layout::left_to_right(egui::Align::Min)
                             },
                             |ui| {
                                 egui::Frame::none()
@@ -73,64 +79,83 @@ impl eframe::App for App {
                         );
                         ui.add_space(8.0);
                     }
+                    
+                    // Add padding at bottom of messages
+                    ui.add_space(50.0);
                 });
-
-            // Input area
-            ui.add_space(8.0);
-            ui.separator();
-            egui::TopBottomPanel::bottom("input_panel").show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    let text_edit = ui.add(
-                        egui::TextEdit::multiline(&mut self.input_text)
-                            .desired_width(f32::INFINITY - 40.0)
-                            .hint_text("Type your message...")
-                    );
-
-                    let send_btn = ui.add_sized(
-                        [40.0, 40.0], 
-                        egui::Button::new(RichText::new("➤").size(20.0))
-                    );
-
-                    let send_clicked = send_btn.clicked() 
-                        || (text_edit.lost_focus() 
-                            && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                            && !ui.input(|i| i.modifiers.shift));
-
-                    if send_clicked {
-                        let user_input = self.input_text.trim().to_string();
-                        if !user_input.is_empty() {
-                            self.conversation.push(format!("You: {}", user_input));
-                            self.input_text.clear();
-                            
-                            // Clone necessary values for async closure
-                            let pending = self.pending_responses.clone();
-                            let input = user_input.clone();
-                            
-                            // Spawn async request using the runtime handle
-                            tokio::spawn(async move {
-                                match request::request_ollama(&input).await {
-                                    Ok(response) => {
-                                        pending.lock().unwrap().push(
-                                            format!("Assistant: {}", response)
-                                        );
-                                    }
-                                    Err(e) => {
-                                        pending.lock().unwrap().push(
-                                            format!("Error: {}", e)
-                                        );
-                                    }
-                                }
-                            });
-                        }
-                    }
-                });
-            });
         });
 
-        // Force continuous repaint while waiting for responses
-        if self.pending_responses.lock().unwrap().is_empty() {
-            ctx.request_repaint();
-        }
+        // Input panel
+        egui::TopBottomPanel::bottom("input_panel")
+            .exact_height(100.0)
+            .show(ctx, |ui| {
+                ui.vertical(|ui| {
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.add_space(10.0);
+                    
+                    ui.horizontal(|ui| {
+                        // Text input with scroll
+                        let text_edit = ui.add(
+                            egui::TextEdit::multiline(&mut self.input_text)
+                                .desired_width(900.0)
+                                .hint_text("Type your message...")
+                                .desired_rows(3)
+                        );
+
+                        // Send button
+                        ui.vertical(|ui| {
+                            ui.add_space(10.0);
+                            let send_btn = ui.add_sized(
+                                [60.0, 60.0],
+                                egui::Button::new(RichText::new("➤").size(24.0))
+                            );
+
+                            let send_clicked = send_btn.clicked() 
+                                || (text_edit.lost_focus() 
+                                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                                    && !ui.input(|i| i.modifiers.shift));
+
+                            if send_clicked {
+                                let user_input = self.input_text.trim().to_string();
+                                if !user_input.is_empty() {
+                                    self.conversation.push(format!("You: {}", user_input));
+                                    self.input_text.clear();
+                                    
+                                    // Add typing indicator
+                                    let temp_id = format!("typing_{}", std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap()
+                                        .as_millis());
+                                    
+                                    self.conversation.push(format!("Assistant: █ ({})", temp_id));
+
+                                    let pending = self.pending_responses.clone();
+                                    let input = user_input.clone();
+                                    
+                                    tokio::spawn(async move {
+                                        match request::request_ollama(&input).await {
+                                            Ok(response) => {
+                                                pending.lock().unwrap().push(
+                                                    format!("Assistant: {} ({})", response, temp_id)
+                                                );
+                                            }
+                                            Err(e) => {
+                                                pending.lock().unwrap().push(
+                                                    format!("Error: {} ({})", e, temp_id)
+                                                );
+                                            }
+                                        }
+                                    });
+                                }
+                            }
+                        });
+                    });
+                });
+            });
+
+        // Force immediate repaint
+        ctx.request_repaint();
     }
 }
 
@@ -143,7 +168,10 @@ fn main() {
     let _enter = rt.enter();
     
     let options = eframe::NativeOptions {
-        vsync: false, // Disable VSYNC for faster repaints
+        viewport: eframe::egui::ViewportBuilder::default()
+            .with_inner_size([950.0, 800.0])
+            .with_resizable(true),
+        vsync: false,
         ..Default::default()
     };
     
