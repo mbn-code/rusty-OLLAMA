@@ -3,41 +3,122 @@ mod request;
 use eframe::egui::{self, RichText, ScrollArea};
 use std::sync::{Arc, Mutex};
 
+struct DebugInfo {
+    events: Vec<String>,
+    frame_times: Vec<f32>,
+    last_frame_time: f64,
+    errors: Vec<String>,
+}
+
+impl Default for DebugInfo {
+    fn default() -> Self {
+        Self {
+            events: Vec::new(),
+            frame_times: Vec::new(),
+            last_frame_time: 0.0,
+            errors: Vec::new(),
+        }
+    }
+}
+
 struct App {
     conversation: Vec<String>,
     input_text: String,
     pending_responses: Arc<Mutex<Vec<String>>>,
+    debug_mode: bool,  // This is our debug switch
+    debug_info: DebugInfo,
 }
 
 impl App {
-    fn new() -> Self {
+    // Add debug_mode parameter to constructor
+    fn new(debug_mode: bool) -> Self {
         Self {
             conversation: Vec::new(),
             input_text: String::new(),
             pending_responses: Arc::new(Mutex::new(Vec::new())),
+            debug_mode,
+            debug_info: DebugInfo::default(),
         }
+    }
+
+    // Helper function to safely access pending responses
+    fn get_pending_responses(&self) -> Vec<String> {
+        self.pending_responses
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_else(|poisoned| poisoned.into_inner().clone())
     }
 }
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Process pending responses first
-        let mut pending = self.pending_responses.lock().unwrap();
-        for response in pending.drain(..) {
-            if let Some((_, temp_id)) = response.split_once('(') {
+        // Toggle debug mode on F12
+        if ctx.input(|i| i.key_pressed(egui::Key::F12)) {
+            self.debug_mode = !self.debug_mode;
+        }
+
+        // Collect input events
+        let events = ctx.input(|i| i.events.clone());
+        for event in &events {
+            match event {
+                egui::Event::Key { key, pressed, .. } if *pressed => {
+                    self.debug_info.events.push(format!("Key pressed: {:?}", key));
+                }
+                egui::Event::PointerButton { button, pressed, .. } if *pressed => {
+                    self.debug_info.events.push(format!("Mouse pressed: {:?}", button));
+                }
+                _ => {}
+            }
+            // Keep only last 20 events
+            if self.debug_info.events.len() > 20 {
+                self.debug_info.events.remove(0);
+            }
+        }
+
+        // Calculate frame time
+        let current_time = ctx.input(|i| i.time);
+        if self.debug_info.last_frame_time != 0.0 {
+            let delta = (current_time - self.debug_info.last_frame_time) as f32;
+            self.debug_info.frame_times.push(delta);
+            if self.debug_info.frame_times.len() > 100 {
+                self.debug_info.frame_times.remove(0);
+            }
+        }
+        self.debug_info.last_frame_time = current_time;
+
+        // Process pending responses
+        let mut pending = match self.pending_responses.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                self.debug_info.errors.push("Mutex poisoned!".to_string());
+                poisoned.into_inner()
+            }
+        };
+        let responses: Vec<String> = pending.drain(..).collect(); // Collect all pending responses
+        drop(pending); // Release the lock immediately
+
+        // Process responses
+        for response in responses {
+            if response.starts_with("Error:") {
+                self.debug_info.errors.push(response.clone());
+            }
+
+            if let Some((content, temp_id)) = response.split_once('(') {
+                let clean_response = content.trim().to_string();
+                let temp_id = temp_id.trim_matches(|c| c == ')' || c == ' ');
+
                 if let Some(position) = self.conversation.iter().position(|m| m.contains(temp_id)) {
-                    self.conversation[position] = response.replace(&format!(" ({})", temp_id), "");
+                    self.conversation[position] = clean_response; // Update conversation based on temp_id
                 }
             }
         }
 
+        // Main UI
         egui::CentralPanel::default().show(ctx, |ui| {
-            // Chat history with bottom padding
             ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
-                    // Reserve space for input panel + padding
                     let available_height = ui.available_height() - 150.0;
                     ui.set_min_height(available_height);
 
@@ -51,12 +132,6 @@ impl eframe::App for App {
                             egui::Color32::from_rgb(229, 229, 229)
                         };
                         
-                        let text_color = if is_user {
-                            egui::Color32::WHITE
-                        } else {
-                            egui::Color32::BLACK
-                        };
-
                         ui.with_layout(
                             if is_user {
                                 egui::Layout::right_to_left(egui::Align::Min)
@@ -69,18 +144,15 @@ impl eframe::App for App {
                                     .rounding(5.0)
                                     .inner_margin(egui::Margin::symmetric(12.0, 8.0))
                                     .show(ui, |ui| {
-                                        ui.label(
-                                            RichText::new(content.trim_start())
-                                                .color(text_color)
-                                                .text_style(egui::TextStyle::Body),
-                                        );
+                                        ui.add(
+                                            egui::Label::new(content.trim_start())
+                                            .wrap(true)
+                                        )
                                     });
                             },
                         );
                         ui.add_space(8.0);
                     }
-                    
-                    // Add padding at bottom of messages
                     ui.add_space(50.0);
                 });
         });
@@ -95,15 +167,13 @@ impl eframe::App for App {
                     ui.add_space(10.0);
                     
                     ui.horizontal(|ui| {
-                        // Text input with scroll
                         let text_edit = ui.add(
                             egui::TextEdit::multiline(&mut self.input_text)
-                                .desired_width(900.0)
+                                .desired_width(f32::INFINITY)
                                 .hint_text("Type your message...")
                                 .desired_rows(3)
                         );
 
-                        // Send button
                         ui.vertical(|ui| {
                             ui.add_space(10.0);
                             let send_btn = ui.add_sized(
@@ -122,7 +192,6 @@ impl eframe::App for App {
                                     self.conversation.push(format!("You: {}", user_input));
                                     self.input_text.clear();
                                     
-                                    // Add typing indicator
                                     let temp_id = format!("typing_{}", std::time::SystemTime::now()
                                         .duration_since(std::time::UNIX_EPOCH)
                                         .unwrap()
@@ -154,12 +223,95 @@ impl eframe::App for App {
                 });
             });
 
-        // Force immediate repaint
+        // Debug window
+        if self.debug_mode {
+            egui::Window::new("Debug Panel")
+                .default_open(true)
+                .resizable(true)
+                .scroll2([true, true])
+                .show(ctx, |ui| {
+                    ui.heading("Debug Mode (F12 to toggle)");
+                    
+                    egui::Grid::new("debug_grid")
+                        .num_columns(2)
+                        .spacing([40.0, 4.0])
+                        .striped(true)
+                        .show(ui, |ui| {
+                            ui.label("Frame time");
+                            ui.label(format!("{:.2} ms", self.debug_info.frame_times.last().unwrap_or(&0.0) * 1000.0));
+                            ui.end_row();
+                            
+                            ui.label("Avg FPS");
+                            let avg_fps = if !self.debug_info.frame_times.is_empty() {
+                                1.0 / (self.debug_info.frame_times.iter().sum::<f32>() / self.debug_info.frame_times.len() as f32)
+                            } else { 0.0 };
+                            ui.label(format!("{:.1}", avg_fps));
+                            ui.end_row();
+                        });
+
+                    ui.collapsing("Conversation State", |ui| {
+                        ui.label(format!("Messages: {}", self.conversation.len()));
+                        ScrollArea::vertical()
+                            .max_height(200.0)
+                            .show(ui, |ui| {
+                                for (i, msg) in self.conversation.iter().enumerate() {
+                                    ui.horizontal(|ui| {
+                                        ui.label(format!("[{}]", i));
+                                        ui.label(msg);
+                                    });
+                                }
+                            });
+                    });
+
+                    ui.collapsing("Pending Responses", |ui| {
+                        let pending = self.get_pending_responses();
+                        ui.label(format!("Count: {}", pending.len()));
+                        ScrollArea::vertical()
+                            .max_height(100.0)
+                            .show(ui, |ui| {
+                                for resp in &pending {
+                                    ui.label(resp);
+                                }
+                            });
+                    });
+
+                    ui.collapsing("Input State", |ui| {
+                        ui.label(format!("Length: {}", self.input_text.len()));
+                        ui.label("Content:");
+                        ui.monospace(&self.input_text);
+                    });
+
+                    ui.collapsing("Recent Events", |ui| {
+                        ScrollArea::vertical()
+                            .max_height(100.0)
+                            .show(ui, |ui| {
+                                for event in &self.debug_info.events {
+                                    ui.label(event);
+                                }
+                            });
+                    });
+
+                    ui.collapsing("Errors", |ui| {
+                        ScrollArea::vertical()
+                            .max_height(100.0)
+                            .show(ui, |ui| {
+                                for error in &self.debug_info.errors {
+                                    ui.label(error);
+                                }
+                            });
+                    });
+                });
+        }
+
         ctx.request_repaint();
     }
 }
 
 fn main() {
+    // Set debug mode from command line or configuration
+    let debug_mode = true;  // Force enable debug mode
+
+    
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -169,7 +321,7 @@ fn main() {
     
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([950.0, 800.0])
+            .with_inner_size([600.0, 800.0])
             .with_resizable(true),
         vsync: false,
         ..Default::default()
@@ -178,6 +330,8 @@ fn main() {
     eframe::run_native(
         "Chat Assistant",
         options,
-        Box::new(|_cc| Box::new(App::new())),
-    );
+        // Make closure move so that debug_mode is captured by value
+        Box::new(move |_cc| Box::new(App::new(debug_mode))),
+    )
+    .unwrap();
 }

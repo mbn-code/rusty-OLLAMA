@@ -9,12 +9,12 @@ struct OllamaResponse {
 
 
 pub async fn request_ollama(prompt: &str) -> Result<String, Box<dyn Error>> {
-    let context = "You are a professional software developer that knows everything about development, and nothing else. Now this is the prompt from the user: \n";
+    let context = "You are a professional software developer that knows everything about development. Now this is the prompt from the user: \n";
 
     let client = Client::new();
     let url = "http://localhost:11434/api/generate";
     let payload = serde_json::json!({
-        "model": "llama3.1",
+        "model": "llama3",
         "prompt": context.to_owned() + prompt,
         "stream": false
     });
