@@ -1,6 +1,6 @@
 mod request;
 
-use eframe::egui;
+use eframe::egui::{self, RichText, ScrollArea};
 use std::sync::{Arc, Mutex};
 
 struct App {
@@ -21,71 +21,134 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Process pending responses first
+        let mut pending = self.pending_responses.lock().unwrap();
+        for response in pending.drain(..) {
+            self.conversation.push(response);
+        }
+        drop(pending); // Release the lock immediately
+
         egui::CentralPanel::default().show(ctx, |ui| {
-            // Display conversation history
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for message in &self.conversation {
-                    ui.label(message);
-                }
-            });
-
-            // Input area with send button
-            ui.horizontal(|ui| {
-                let text_edit = ui.text_edit_singleline(&mut self.input_text);
-                
-                // Send on Enter or button click
-                let send_clicked = ui.button("Send").clicked() 
-                    || text_edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                
-                if send_clicked {
-                    let user_input = self.input_text.trim().to_string();
-                    if !user_input.is_empty() {
-                        // Add user message to conversation
-                        self.conversation.push(format!("You: {}", user_input));
+            // Chat history with scroll area
+            ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    for message in &self.conversation {
+                        let (sender, content) = message.split_once(':').unwrap_or(("", message));
+                        let is_user = sender.trim() == "You";
                         
-                        // Clone needed variables for async closure
-                        let pending_responses = self.pending_responses.clone();
-                        let input_clone = user_input.clone();
-                        self.input_text.clear();
+                        // Message bubble styling
+                        let bubble_color = if is_user {
+                            egui::Color32::from_rgb(0, 92, 175)
+                        } else {
+                            egui::Color32::from_rgb(229, 229, 229)
+                        };
+                        
+                        let text_color = if is_user {
+                            egui::Color32::WHITE
+                        } else {
+                            egui::Color32::BLACK
+                        };
 
-                        // Spawn async request
-                        tokio::spawn(async move {
-                            match request::request_ollama(&input_clone).await {
-                                Ok(response) => {
-                                    pending_responses.lock().unwrap().push(response);
-                                }
-                                Err(e) => {
-                                    pending_responses.lock().unwrap().push(
-                                        format!("Error: {}", e)
-                                    );
-                                }
-                            }
-                        });
+                        ui.with_layout(
+                            if is_user {
+                                egui::Layout::right_to_left(egui::Align::Center)
+                            } else {
+                                egui::Layout::left_to_right(egui::Align::Center)
+                            },
+                            |ui| {
+                                egui::Frame::none()
+                                    .fill(bubble_color)
+                                    .rounding(5.0)
+                                    .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            RichText::new(content.trim_start())
+                                                .color(text_color)
+                                                .text_style(egui::TextStyle::Body),
+                                        );
+                                    });
+                            },
+                        );
+                        ui.add_space(8.0);
                     }
-                }
+                });
+
+            // Input area
+            ui.add_space(8.0);
+            ui.separator();
+            egui::TopBottomPanel::bottom("input_panel").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let text_edit = ui.add(
+                        egui::TextEdit::multiline(&mut self.input_text)
+                            .desired_width(f32::INFINITY - 40.0)
+                            .hint_text("Type your message...")
+                    );
+
+                    let send_btn = ui.add_sized(
+                        [40.0, 40.0], 
+                        egui::Button::new(RichText::new("➤").size(20.0))
+                    );
+
+                    let send_clicked = send_btn.clicked() 
+                        || (text_edit.lost_focus() 
+                            && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                            && !ui.input(|i| i.modifiers.shift));
+
+                    if send_clicked {
+                        let user_input = self.input_text.trim().to_string();
+                        if !user_input.is_empty() {
+                            self.conversation.push(format!("You: {}", user_input));
+                            self.input_text.clear();
+                            
+                            // Clone necessary values for async closure
+                            let pending = self.pending_responses.clone();
+                            let input = user_input.clone();
+                            
+                            // Spawn async request using the runtime handle
+                            tokio::spawn(async move {
+                                match request::request_ollama(&input).await {
+                                    Ok(response) => {
+                                        pending.lock().unwrap().push(
+                                            format!("Assistant: {}", response)
+                                        );
+                                    }
+                                    Err(e) => {
+                                        pending.lock().unwrap().push(
+                                            format!("Error: {}", e)
+                                        );
+                                    }
+                                }
+                            });
+                        }
+                    }
+                });
             });
         });
 
-        // Process pending responses
-        let mut pending = self.pending_responses.lock().unwrap();
-        for response in pending.drain(..) {
-            self.conversation.push(format!("Ollama: {}", response));
+        // Force continuous repaint while waiting for responses
+        if self.pending_responses.lock().unwrap().is_empty() {
+            ctx.request_repaint();
         }
-
-        // Automatically scroll to bottom
-        ctx.request_repaint();
     }
 }
 
 fn main() {
-    // Initialize tokio runtime
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let _guard = rt.enter();
-
-    // Launch GUI
-    let options = eframe::NativeOptions::default();
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    
+    let _enter = rt.enter();
+    
+    let options = eframe::NativeOptions {
+        vsync: false, // Disable VSYNC for faster repaints
+        ..Default::default()
+    };
+    
     eframe::run_native(
-        "Ollama Chat",
+        "Chat Assistant",
         options,
         Box::new(|_cc| Box::new(App::new())),
     );
