@@ -97,19 +97,36 @@ impl eframe::App for App {
         let responses: Vec<String> = pending.drain(..).collect(); // Collect all pending responses
         drop(pending); // Release the lock immediately
 
-        // Process responses
+        // Process responses with more debug details
         for response in responses {
+            self.debug_info.events.push(format!("Processing response: {}", response));
             if response.starts_with("Error:") {
                 self.debug_info.errors.push(response.clone());
             }
 
-            if let Some((content, temp_id)) = response.split_once('(') {
+            if let Some((content, temp_id)) = response.rsplit_once('(') {  // Changed line
                 let clean_response = content.trim().to_string();
                 let temp_id = temp_id.trim_matches(|c| c == ')' || c == ' ');
-
-                if let Some(position) = self.conversation.iter().position(|m| m.contains(temp_id)) {
-                    self.conversation[position] = clean_response; // Update conversation based on temp_id
+                
+                // Use ends_with to accurately match the typing indicator message
+                let search = format!("({})", temp_id);
+                if let Some(position) = self.conversation.iter().position(|m| m.trim_end().ends_with(&search)) {
+                    self.debug_info.events.push(format!(
+                        "Updating conversation at position {} with response: {}",
+                        position, clean_response
+                    ));
+                    self.conversation[position] = format!("Assistant: {}", clean_response);
+                } else {
+                    self.debug_info.events.push(format!(
+                        "No match found in conversation for temp_id: {}",
+                        temp_id
+                    ));
                 }
+            } else {
+                self.debug_info.events.push(format!(
+                    "Response did not contain a temp_id: {}",
+                    response
+                ));
             }
         }
 
