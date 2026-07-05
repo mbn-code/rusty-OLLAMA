@@ -5,7 +5,7 @@
 
 # rusty ollama
 
-A Rust project named "rusty ollama" that leverages asynchronous programming to make requests to an external service, parse the responses, and handle them accordingly. This project is built with a focus on learning and demonstrating the use of various Rust features and libraries, including `reqwest` for making HTTP requests, `serde` for serialization and deserialization, `tokio` for asynchronous runtime, and `futures-util` for working with futures.
+A Rust desktop chat app for talking to a locally running [Ollama](https://ollama.com/) model. It provides a native GUI (built with `egui`/`eframe`) where you type a message and get the model's reply in a chat-bubble interface. Requests are sent asynchronously to the local Ollama server (`http://localhost:11434`) using `reqwest` and `tokio`, with responses parsed via `serde`. Built with a focus on learning Rust GUI and async programming.
 
 ## Features
 
@@ -24,11 +24,11 @@ A Rust project named "rusty ollama" that leverages asynchronous programming to m
 
 ## Getting Started
 
-To get started with "rusty ollama", ensure you have Rust and Cargo installed on your machine. Then, clone this repository and navigate into the project directory.
+To get started with "rusty ollama", ensure you have Rust and Cargo installed on your machine, and that [Ollama](https://ollama.com/) is running locally with the `llama3` model pulled (`ollama pull llama3`). Then clone this repository and build the crate, which lives in the `everything` directory.
 
 ```sh
 git clone https://github.com/mbn-code/rusty-OLLAMA.git
-cd rusty-OLLAMA
+cd rusty-OLLAMA/everything
 
 cargo build
 cargo run
